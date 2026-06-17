@@ -38,7 +38,7 @@ export default function App() {
   return (
     <div
       style={{
-        height: "calc(100vh - 20px)",
+        height: "95dvh",
         display: "flex",
         flexDirection: "column",
         gap: "16px",
