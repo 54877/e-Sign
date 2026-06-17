@@ -1,18 +1,23 @@
 import { useCallback, useEffect, useRef } from "react";
 import SignatureCanvas from "react-signature-canvas";
 
+type SignatureData = ReturnType<SignatureCanvas["toData"]>;
+
+type SignatureState = {
+  data: SignatureData;
+  width: number;
+  height: number;
+};
+
 export default function App() {
   const sigRef = useRef<SignatureCanvas | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
 
-  // 保存筆跡資料
-  const signatureDataRef = useRef<ReturnType<SignatureCanvas["toData"]> | null>(
-    null,
-  );
+  const signatureStateRef = useRef<SignatureState | null>(null);
 
   const clear = () => {
     sigRef.current?.clear();
-    signatureDataRef.current = null;
+    signatureStateRef.current = null;
   };
 
   const save = () => {
@@ -23,33 +28,69 @@ export default function App() {
     console.log(dataUrl);
   };
 
+  /**
+   * ⭐ 保存簽名
+   */
+  const saveSignatureState = () => {
+    const wrapper = wrapperRef.current;
+    const sig = sigRef.current;
+
+    if (!wrapper || !sig) return;
+
+    signatureStateRef.current = {
+      data: sig.toData(),
+      width: wrapper.clientWidth,
+      height: wrapper.clientHeight,
+    };
+  };
+
+  /**
+   * ⭐ resize + restore（修正版）
+   */
   const resizeCanvas = useCallback(() => {
     const canvas = sigRef.current?.getCanvas();
     const wrapper = wrapperRef.current;
 
     if (!canvas || !wrapper) return;
 
-    // 先保存目前筆跡
-    signatureDataRef.current = sigRef.current?.toData() ?? null;
+    const old = signatureStateRef.current;
 
-    const ratio = window.devicePixelRatio || 1;
     const width = wrapper.clientWidth;
     const height = wrapper.clientHeight;
+
+    const ratio = window.devicePixelRatio || 1;
+
+    // resize canvas
     canvas.width = width * ratio;
     canvas.height = height * ratio;
+
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
+    // ✅ 正確 reset（你剛剛錯在這）
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.scale(ratio, ratio);
 
-    // ⭐ 恢復筆跡
-    if (signatureDataRef.current && signatureDataRef.current.length > 0) {
-      sigRef.current?.fromData(signatureDataRef.current);
+    /**
+     * ⭐ restore signature（關鍵修正）
+     * 必須重新 sync signature pad state
+     */
+    if (old?.data?.length) {
+      sigRef.current?.clear();
+
+      // 等一個 frame 避免 internal state conflict
+      requestAnimationFrame(() => {
+        sigRef.current?.fromData(old.data);
+      });
     }
   }, []);
 
+  /**
+   * ⭐ init + resize listener
+   */
   useEffect(() => {
     resizeCanvas();
 
@@ -60,7 +101,7 @@ export default function App() {
 
       timer = window.setTimeout(() => {
         resizeCanvas();
-      }, 200);
+      }, 150);
     };
 
     window.addEventListener("resize", handleResize);
@@ -77,9 +118,10 @@ export default function App() {
         height: "95dvh",
         display: "flex",
         flexDirection: "column",
-        gap: "16px",
+        gap: 16,
       }}
     >
+      {/* canvas */}
       <div
         ref={wrapperRef}
         style={{
@@ -94,9 +136,7 @@ export default function App() {
           minWidth={1}
           maxWidth={3}
           throttle={8}
-          onEnd={() => {
-            signatureDataRef.current = sigRef.current?.toData() ?? null;
-          }}
+          onEnd={saveSignatureState}
           canvasProps={{
             style: {
               width: "100%",
@@ -109,6 +149,7 @@ export default function App() {
         />
       </div>
 
+      {/* toolbar */}
       <div style={{ display: "flex", gap: 10 }}>
         <button onClick={clear}>清除</button>
         <button onClick={save}>儲存</button>
