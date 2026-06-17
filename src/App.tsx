@@ -57,8 +57,8 @@ export default function App() {
     const newW = wrapper.clientWidth;
     const newH = wrapper.clientHeight;
 
-    const scaleX = newW / state.width;
-    const scaleY = newH / state.height;
+    // ⭐ 等比例縮放（避免變形）
+    const scale = Math.min(newW / state.width, newH / state.height);
 
     const ratio = window.devicePixelRatio || 1;
 
@@ -71,7 +71,8 @@ export default function App() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
+    // ⭐ 等比例 transform（關鍵修正）
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
     ctx.scale(ratio, ratio);
 
     sigRef.current?.clear();
