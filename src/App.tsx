@@ -13,31 +13,31 @@ export default function App() {
   const sigRef = useRef<SignatureCanvas | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
 
-  const signatureStateRef = useRef<SignatureState | null>(null);
+  const stateRef = useRef<SignatureState | null>(null);
 
   const clear = () => {
     sigRef.current?.clear();
-    signatureStateRef.current = null;
+    stateRef.current = null;
   };
 
   const save = () => {
     if (!sigRef.current) return;
 
-    const dataUrl = sigRef.current.getTrimmedCanvas().toDataURL("image/png");
+    const url = sigRef.current.getTrimmedCanvas().toDataURL("image/png");
 
-    console.log(dataUrl);
+    console.log(url);
   };
 
   /**
-   * ⭐ 保存簽名
+   * ⭐ 存原始 data + 當下尺寸
    */
-  const saveSignatureState = () => {
-    const wrapper = wrapperRef.current;
+  const capture = () => {
     const sig = sigRef.current;
+    const wrapper = wrapperRef.current;
 
-    if (!wrapper || !sig) return;
+    if (!sig || !wrapper) return;
 
-    signatureStateRef.current = {
+    stateRef.current = {
       data: sig.toData(),
       width: wrapper.clientWidth,
       height: wrapper.clientHeight,
@@ -45,98 +45,74 @@ export default function App() {
   };
 
   /**
-   * ⭐ resize + restore（修正版）
+   * ⭐ scale + redraw（核心）
    */
-  const resizeCanvas = useCallback(() => {
+  const redrawWithScale = useCallback(() => {
     const canvas = sigRef.current?.getCanvas();
     const wrapper = wrapperRef.current;
+    const state = stateRef.current;
 
-    if (!canvas || !wrapper) return;
+    if (!canvas || !wrapper || !state) return;
 
-    const old = signatureStateRef.current;
+    const newW = wrapper.clientWidth;
+    const newH = wrapper.clientHeight;
 
-    const width = wrapper.clientWidth;
-    const height = wrapper.clientHeight;
+    const scaleX = newW / state.width;
+    const scaleY = newH / state.height;
 
     const ratio = window.devicePixelRatio || 1;
 
-    // resize canvas
-    canvas.width = width * ratio;
-    canvas.height = height * ratio;
+    canvas.width = newW * ratio;
+    canvas.height = newH * ratio;
 
-    canvas.style.width = `${width}px`;
-    canvas.style.height = `${height}px`;
+    canvas.style.width = `${newW}px`;
+    canvas.style.height = `${newH}px`;
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // ✅ 正確 reset（你剛剛錯在這）
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
     ctx.scale(ratio, ratio);
 
-    /**
-     * ⭐ restore signature（關鍵修正）
-     * 必須重新 sync signature pad state
-     */
-    if (old?.data?.length) {
-      sigRef.current?.clear();
+    sigRef.current?.clear();
 
-      // 等一個 frame 避免 internal state conflict
-      requestAnimationFrame(() => {
-        sigRef.current?.fromData(old.data);
-      });
-    }
+    requestAnimationFrame(() => {
+      sigRef.current?.fromData(state.data);
+    });
   }, []);
 
   /**
    * ⭐ init + resize listener
    */
   useEffect(() => {
-    resizeCanvas();
+    redrawWithScale();
 
     let timer: number;
 
-    const handleResize = () => {
+    const onResize = () => {
       clearTimeout(timer);
-
-      timer = window.setTimeout(() => {
-        resizeCanvas();
-      }, 150);
+      timer = window.setTimeout(redrawWithScale, 100);
     };
 
-    window.addEventListener("resize", handleResize);
+    window.addEventListener("resize", onResize);
 
     return () => {
       clearTimeout(timer);
-      window.removeEventListener("resize", handleResize);
+      window.removeEventListener("resize", onResize);
     };
-  }, [resizeCanvas]);
+  }, [redrawWithScale]);
 
   return (
-    <div
-      style={{
-        height: "95dvh",
-        display: "flex",
-        flexDirection: "column",
-        gap: 16,
-      }}
-    >
-      {/* canvas */}
-      <div
-        ref={wrapperRef}
-        style={{
-          flex: 1,
-          minHeight: 0,
-        }}
-      >
+    <div style={{ height: "95dvh", display: "flex", flexDirection: "column" }}>
+      <div ref={wrapperRef} style={{ flex: 1, minHeight: 0 }}>
         <SignatureCanvas
           ref={sigRef}
-          clearOnResize={false}
           penColor="black"
           minWidth={1}
           maxWidth={3}
           throttle={8}
-          onEnd={saveSignatureState}
+          clearOnResize={false}
+          onEnd={capture}
           canvasProps={{
             style: {
               width: "100%",
@@ -149,7 +125,6 @@ export default function App() {
         />
       </div>
 
-      {/* toolbar */}
       <div style={{ display: "flex", gap: 10 }}>
         <button onClick={clear}>清除</button>
         <button onClick={save}>儲存</button>
