@@ -3,97 +3,76 @@ import SignatureCanvas from "react-signature-canvas";
 
 export default function App() {
   const sigRef = useRef<SignatureCanvas | null>(null);
-  const secSigRef = useRef<SignatureCanvas | null>(null);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
 
-  // 清除
-  const clear = (ref: React.RefObject<SignatureCanvas | null>) => {
-    ref.current?.clear();
-  };
+  const clear = () => sigRef.current?.clear();
 
-  // 儲存
   const save = () => {
     if (!sigRef.current) return;
+
     const dataUrl = sigRef.current.getTrimmedCanvas().toDataURL("image/png");
-    console.log(dataUrl); // 👉 可送後端 or 顯示圖片
-  };
 
-  // 修正手機頓感（DPI + RWD）
-  const fixCanvas = () => {
-    const ratio = Math.max(window.devicePixelRatio || 1, 1);
-
-    const fix = (ref: React.RefObject<SignatureCanvas | null>) => {
-      const canvas = ref.current?.getCanvas();
-      if (!canvas) return;
-
-      const width = canvas.offsetWidth || 500;
-      const height = canvas.offsetHeight || 200;
-
-      canvas.width = width * ratio;
-      canvas.height = height * ratio;
-
-      canvas.style.width = width + "px";
-      canvas.style.height = height + "px";
-
-      const ctx = canvas.getContext("2d");
-      ctx?.scale(ratio, ratio);
-    };
-
-    fix(sigRef);
-    fix(secSigRef);
+    console.log(dataUrl);
   };
 
   useEffect(() => {
-    fixCanvas();
+    const canvas = sigRef.current?.getCanvas();
+    const wrapper = wrapperRef.current;
+    if (!canvas || !wrapper) return;
 
-    window.addEventListener("resize", fixCanvas);
-    return () => window.removeEventListener("resize", fixCanvas);
+    const ratio = window.devicePixelRatio || 1;
+
+    const width = wrapper.clientWidth;
+    const height = wrapper.clientHeight;
+
+    canvas.width = width * ratio;
+    canvas.height = height * ratio;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.scale(ratio, ratio);
   }, []);
 
   return (
-    <div style={{ maxWidth: 600 }}>
-      <SignatureCanvas
-        ref={sigRef}
-        penColor="black"
-        minWidth={1}
-        maxWidth={3}
-        throttle={8}
-        canvasProps={{
-          className: "sigCanvas",
-          style: {
-            width: "100%",
-            height: 200,
-            border: "1px solid #ccc",
-            touchAction: "none",
-          },
+    <div
+      style={{
+        height: "calc(100vh - 20px)",
+        display: "flex",
+        flexDirection: "column",
+        gap: "16px",
+      }}
+    >
+      <div
+        ref={wrapperRef}
+        style={{
+          flex: 1,
+          minHeight: 0,
         }}
-      />
-      <button style={{ marginRight: "16px" }} onClick={() => clear(sigRef)}>
-        清除
-      </button>
-      <button onClick={save}>儲存</button>
+      >
+        <SignatureCanvas
+          ref={sigRef}
+          penColor="black"
+          minWidth={1}
+          maxWidth={3}
+          throttle={8}
+          canvasProps={{
+            style: {
+              width: "100%",
+              height: "100%",
+              display: "block",
+              border: "1px solid #ccc",
+              touchAction: "none",
+            },
+          }}
+        />
+      </div>
 
-      <SignatureCanvas
-        ref={secSigRef}
-        penColor="black"
-        minWidth={1}
-        maxWidth={3}
-        throttle={8}
-        canvasProps={{
-          className: "sigCanvas",
-          style: {
-            width: "100%",
-            height: 200,
-            border: "1px solid #ccc",
-            marginTop: 20,
-            touchAction: "none",
-          },
-        }}
-      />
-
-      <button style={{ marginRight: "16px" }} onClick={() => clear(secSigRef)}>
-        清除
-      </button>
-      <button onClick={save}>儲存</button>
+      <div style={{ display: "flex", gap: 10 }}>
+        <button onClick={clear}>清除</button>
+        <button onClick={save}>儲存</button>
+      </div>
     </div>
   );
 }
