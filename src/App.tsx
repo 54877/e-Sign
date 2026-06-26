@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef } from "react";
 import SignatureCanvas from "react-signature-canvas";
 
-type SignatureData = ReturnType<SignatureCanvas["toData"]>;
+type SignaturePad = InstanceType<typeof SignatureCanvas>;
+type SignatureData = ReturnType<SignaturePad["toData"]>;
 
-type SignatureState = {
-  data: SignatureData;
+type SignatureCache = {
+  data: SignatureData | null;
   width: number;
   height: number;
 };
@@ -13,54 +14,127 @@ export default function App() {
   const sigRef = useRef<SignatureCanvas | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
 
-  const stateRef = useRef<SignatureState | null>(null);
+  const portraitCacheRef = useRef<SignatureCache>({
+    data: null,
+    width: 0,
+    height: 0,
+  });
+
+  const landscapeCacheRef = useRef<SignatureCache>({
+    data: null,
+    width: 0,
+    height: 0,
+  });
+
+  const portraitDirtyRef = useRef(false);
+  const landscapeDirtyRef = useRef(false);
+
+  const sizeRef = useRef({ width: 0, height: 0 });
+
+  const isPortrait = (w: number, h: number) => h >= w;
 
   const clear = () => {
     sigRef.current?.clear();
-    stateRef.current = null;
+
+    portraitCacheRef.current = { data: null, width: 0, height: 0 };
+    landscapeCacheRef.current = { data: null, width: 0, height: 0 };
+
+    portraitDirtyRef.current = false;
+    landscapeDirtyRef.current = false;
   };
 
   const save = () => {
-    if (!sigRef.current) return;
+    const sig = sigRef.current;
+    if (!sig) return;
 
-    const url = sigRef.current.getTrimmedCanvas().toDataURL("image/png");
-
-    console.log(url);
+    console.log(sig.getTrimmedCanvas().toDataURL("image/png"));
   };
 
-  /**
-   * ⭐ 存原始 data + 當下尺寸
-   */
+  const scaleSignature = (
+    data: SignatureData,
+    scaleX: number,
+    scaleY: number,
+  ): SignatureData => {
+    return data.map((stroke) =>
+      stroke.map((p) => {
+        p.x *= scaleX;
+        p.y *= scaleY;
+        return p;
+      }),
+    );
+  };
+
+  const draw = (sig: SignatureCanvas, data: SignatureData) => {
+    requestAnimationFrame(() => {
+      sig.clear();
+      sig.fromData(data);
+    });
+  };
+
   const capture = () => {
+    const sig = sigRef.current;
+    if (!sig) return;
+
+    const canvas = sig.getCanvas();
+    const data = sig.toData();
+
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+
+    const cache: SignatureCache = {
+      data,
+      width: w,
+      height: h,
+    };
+
+    if (isPortrait(w, h)) {
+      portraitCacheRef.current = cache;
+      landscapeDirtyRef.current = true;
+    } else {
+      landscapeCacheRef.current = cache;
+      portraitDirtyRef.current = true;
+    }
+  };
+
+  const buildFromOtherSide = (
+    source: SignatureCache,
+    targetW: number,
+    targetH: number,
+  ): SignatureCache | null => {
+    if (!source.data) return null;
+
+    const scaleX = source.width ? targetW / source.width : 1;
+    const scaleY = source.height ? targetH / source.height : 1;
+
+    const cloned = structuredClone(source.data) as SignatureData;
+
+    const scaled = scaleSignature(cloned, scaleX, scaleY);
+
+    return {
+      data: scaled,
+      width: targetW,
+      height: targetH,
+    };
+  };
+
+  const resizeCanvas = useCallback(() => {
     const sig = sigRef.current;
     const wrapper = wrapperRef.current;
 
     if (!sig || !wrapper) return;
 
-    stateRef.current = {
-      data: sig.toData(),
-      width: wrapper.clientWidth,
-      height: wrapper.clientHeight,
-    };
-  };
-
-  /**
-   * ⭐ scale + redraw（核心）
-   */
-  const redrawWithScale = useCallback(() => {
-    const canvas = sigRef.current?.getCanvas();
-    const wrapper = wrapperRef.current;
-    const state = stateRef.current;
-
-    if (!canvas || !wrapper || !state) return;
+    const canvas = sig.getCanvas();
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
 
     const newW = wrapper.clientWidth;
     const newH = wrapper.clientHeight;
 
-    // ⭐ 等比例縮放（避免變形）
-    const scale = Math.min(newW / state.width, newH / state.height);
-
     const ratio = window.devicePixelRatio || 1;
+
+    const portrait = isPortrait(newW, newH);
+
+    sizeRef.current = { width: newW, height: newH };
 
     canvas.width = newW * ratio;
     canvas.height = newH * ratio;
@@ -68,31 +142,54 @@ export default function App() {
     canvas.style.width = `${newW}px`;
     canvas.style.height = `${newH}px`;
 
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    // ⭐ 等比例 transform（關鍵修正）
-    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.scale(ratio, ratio);
 
-    sigRef.current?.clear();
+    if (portrait) {
+      const cache = portraitCacheRef.current;
 
-    requestAnimationFrame(() => {
-      sigRef.current?.fromData(state.data);
-    });
+      if (cache.data && !portraitDirtyRef.current) {
+        draw(sig, cache.data);
+        return;
+      }
+
+      const built = buildFromOtherSide(landscapeCacheRef.current, newW, newH);
+
+      if (built) {
+        portraitCacheRef.current = built;
+        portraitDirtyRef.current = false;
+        draw(sig, built.data!);
+      }
+
+      return;
+    }
+
+    const cache = landscapeCacheRef.current;
+
+    if (cache.data && !landscapeDirtyRef.current) {
+      draw(sig, cache.data);
+      return;
+    }
+
+    const built = buildFromOtherSide(portraitCacheRef.current, newW, newH);
+
+    if (built) {
+      landscapeCacheRef.current = built;
+      landscapeDirtyRef.current = false;
+      draw(sig, built.data!);
+    }
   }, []);
 
-  /**
-   * ⭐ init + resize listener
-   */
   useEffect(() => {
-    redrawWithScale();
+    resizeCanvas();
 
     let timer: number;
 
     const onResize = () => {
       clearTimeout(timer);
-      timer = window.setTimeout(redrawWithScale, 100);
+      timer = window.setTimeout(() => {
+        resizeCanvas();
+      }, 100);
     };
 
     window.addEventListener("resize", onResize);
@@ -101,7 +198,7 @@ export default function App() {
       clearTimeout(timer);
       window.removeEventListener("resize", onResize);
     };
-  }, [redrawWithScale]);
+  }, [resizeCanvas]);
 
   return (
     <div style={{ height: "95dvh", display: "flex", flexDirection: "column" }}>
